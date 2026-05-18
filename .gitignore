@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+
+# Heavy artifacts kept out of git (regenerate with the provided scripts).
+data/features/
+data/models/
+data/results/
+runs/
+
+# Local environment files.
+.env
+*.log
