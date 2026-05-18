@@ -5,8 +5,7 @@ Paths default to the repo layout shipped with the official release:
     official_github/
     ├── data/{dataset}/<split>.json
     ├── data/features/{model}/{dataset}/{split}/features_*.npz
-    ├── data/models/methods/PAIR/{model}/{dataset}/pair_{train_mode}.pkl
-    └── data/models/methods/PAIR_NEW/{model}/{dataset}/pair_new_{train_mode}.pkl
+    └── data/models/methods/PAIR/{model}/{dataset}/pair_{train_mode}.pkl
 
 Override the project root with the `PAIR_ROOT` environment variable when
 data lives elsewhere (e.g. on a shared scratch volume).
@@ -26,7 +25,6 @@ DATA_ROOT = PROJECT_ROOT / "data"
 FEATURES_DIR = DATA_ROOT / "features"
 MODELS_DIR = DATA_ROOT / "models" / "methods"
 PAIR_DIR = MODELS_DIR / "PAIR"
-PAIR_NEW_DIR = MODELS_DIR / "PAIR_NEW"
 RESULTS_DIR = DATA_ROOT / "results"
 
 # Per-dataset raw dialog files (clean_train / contaminated_train / clean_test

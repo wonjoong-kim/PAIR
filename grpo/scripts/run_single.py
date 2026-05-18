@@ -18,7 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from grpo.envs import GTAEnvironment, ToolBenchEnvironment
 from grpo.paths import RUNS_DIR
-from grpo.rewards import OutcomeReward, PAIRReward, PAIRNewReward
+from grpo.rewards import OutcomeReward, PAIRReward
 from grpo.rewards.pair import PAIRMomentumReward, PAIRRepairReward
 from grpo.training import GRPOConfig, GRPOTrainer, LoRAPolicy, PolicyConfig
 
@@ -27,7 +27,6 @@ logger = logging.getLogger("run_single")
 
 REWARD_BUILDERS = {
     "pair":           lambda pol, ds, tm, alpha: PAIRReward(pol, ds, tm),
-    "pair_new":       lambda pol, ds, tm, alpha: PAIRNewReward(pol, ds, tm),
     "pair_repair":    lambda pol, ds, tm, alpha: PAIRRepairReward(pol, ds, tm, alpha=alpha or 2.0),
     "pair_momentum":  lambda pol, ds, tm, alpha: PAIRMomentumReward(pol, ds, tm, alpha=alpha or 2.0),
     "outcome":        lambda *_:                  OutcomeReward(),
@@ -61,7 +60,7 @@ def main():
     parser.add_argument("--lr_schedule", default="constant", choices=["constant", "cosine"])
     parser.add_argument("--lr_warmup_frac", type=float, default=0.05)
     parser.add_argument("--alpha", type=float, default=None,
-                        help="Bonus magnitude for pair_repair / pair_momentum (logit-space).")
+                        help="Bonus magnitude for pair_repair / pair_momentum (logit-space). Default 2.0.")
     parser.add_argument("--output_dir", default=None)
     parser.add_argument("--save_every", type=int, default=100)
     parser.add_argument("--log_every", type=int, default=10)

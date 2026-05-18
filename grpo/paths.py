@@ -12,7 +12,6 @@ PROJECT_ROOT = Path(os.environ.get(
 
 DATA_ROOT = PROJECT_ROOT / "data"
 PAIR_PROBE_DIR = DATA_ROOT / "models" / "methods" / "PAIR"
-PAIR_NEW_PROBE_DIR = DATA_ROOT / "models" / "methods" / "PAIR_NEW"
 
 DATASET_DIRS = {
     "gta": DATA_ROOT / "gta",

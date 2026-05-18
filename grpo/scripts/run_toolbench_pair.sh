@@ -6,7 +6,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 POLICY="${POLICY:-qwen7b}"
-REWARD="${REWARD:-pair}"           # pair | pair_new | pair_repair | pair_momentum
+REWARD="${REWARD:-pair}"           # pair | pair_repair | pair_momentum | outcome
 TRAIN_MODE="${TRAIN_MODE:-mixed}"
 STEPS="${STEPS:-500}"
 BATCH="${BATCH:-8}"

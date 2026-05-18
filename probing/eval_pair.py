@@ -8,7 +8,7 @@ prints classification metrics:
 
 Usage:
     python -m probing.eval_pair --model qwen7b --dataset gta --train-mode mixed
-    python -m probing.eval_pair --model qwen7b --dataset toolbench --pair-new
+    python -m probing.eval_pair --model qwen7b --dataset toolbench --all
 """
 
 from __future__ import annotations
@@ -21,12 +21,11 @@ from pathlib import Path
 from typing import Dict, List
 
 import numpy as np
-import torch
 from sklearn.metrics import average_precision_score, brier_score_loss, roc_auc_score
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from paths import FEATURES_DIR, PAIR_DIR, PAIR_NEW_DIR, RESULTS_DIR
+from paths import FEATURES_DIR, PAIR_DIR
 from utils import (
     expected_calibration_error,
     pairwise_ranking_accuracy,
@@ -61,32 +60,8 @@ def score_pair(bundle, Xh, Xa) -> np.ndarray:
     return bundle["probe_correction"].predict_proba(X_stage2)[:, 1]
 
 
-def score_pair_new(bundle, Xh, Xa) -> np.ndarray:
-    """PAIR-NEW logit-residual: σ(z_base + delta_logit(Xa, s_base))."""
-    from train_pair_new import LogitResidualHead
-
-    probe_base = bundle["probe_base"]
-    attn_scaler = bundle["attn_scaler"]
-    head = LogitResidualHead(int(bundle["head_arch"]["attn_dim"]))
-    head.load_state_dict(bundle["head_state_dict"])
-    head.eval()
-
-    z_base = probe_base.decision_function(Xh)
-    s_base = probe_base.predict_proba(Xh)[:, 1]
-    Xa_s = attn_scaler.transform(Xa)
-    with torch.no_grad():
-        delta = head(
-            torch.from_numpy(Xa_s.astype(np.float32)),
-            torch.from_numpy(s_base.astype(np.float32)).unsqueeze(1),
-        ).numpy()
-    return 1.0 / (1.0 + np.exp(-(z_base + delta)))
-
-
-def evaluate_one(model: str, dataset: str, train_mode: str,
-                 pair_new: bool, rows: List[Dict]) -> None:
-    bundle_path = (PAIR_NEW_DIR if pair_new else PAIR_DIR) / model / dataset / (
-        f"pair_new_{train_mode}.pkl" if pair_new else f"pair_{train_mode}.pkl"
-    )
+def evaluate_one(model: str, dataset: str, train_mode: str, rows: List[Dict]) -> None:
+    bundle_path = PAIR_DIR / model / dataset / f"pair_{train_mode}.pkl"
     if not bundle_path.exists():
         logger.warning(f"  SKIP — bundle not found: {bundle_path}")
         return
@@ -97,8 +72,7 @@ def evaluate_one(model: str, dataset: str, train_mode: str,
     hidden_feat = cfg.get("hidden_feature", "last_token")
     attn_feat = cfg.get("attn_feature", "multi_layer_attn")
 
-    logger.info(f"\n=== {('PAIR-NEW' if pair_new else 'PAIR')} | "
-                f"{model}/{dataset}/{train_mode} ===")
+    logger.info(f"\n=== PAIR | {model}/{dataset}/{train_mode} ===")
     logger.info(f"  hidden={hidden_feat}  attn={attn_feat}")
 
     for split in EVAL_SPLITS:
@@ -111,8 +85,7 @@ def evaluate_one(model: str, dataset: str, train_mode: str,
             logger.warning(f"  SKIP {split}: {e}")
             continue
 
-        p = score_pair_new(bundle, Xh, Xa) if pair_new else score_pair(bundle, Xh, Xa)
-
+        p = score_pair(bundle, Xh, Xa)
         m = {
             "AUROC": float(roc_auc_score(y, p)),
             "AUPRC": float(average_precision_score(y, p)),
@@ -125,7 +98,6 @@ def evaluate_one(model: str, dataset: str, train_mode: str,
                     f"PairAcc={m['PairAcc']:.4f}")
         rows.append({
             "model": model, "dataset": dataset, "train_mode": train_mode,
-            "method": "pair_new" if pair_new else "pair",
             "test_split": split, **m,
         })
 
@@ -135,22 +107,19 @@ def main():
     parser.add_argument("--model", default="qwen7b", choices=["llama8b", "qwen7b", "mistral7b"])
     parser.add_argument("--dataset", default="gta", choices=["gta", "toolbench"])
     parser.add_argument("--train-mode", default="mixed", choices=["clean_only", "mixed"])
-    parser.add_argument("--pair-new", action="store_true",
-                        help="Evaluate PAIR-NEW (logit-residual) instead of PAIR.")
     parser.add_argument("--all", action="store_true",
-                        help="Evaluate PAIR and PAIR-NEW for both train modes.")
+                        help="Evaluate both train modes (clean_only and mixed).")
     parser.add_argument("--output", default=None)
     args = parser.parse_args()
 
     rows: List[Dict] = []
     if args.all:
         for tm in ("clean_only", "mixed"):
-            for is_new in (False, True):
-                evaluate_one(args.model, args.dataset, tm, is_new, rows)
+            evaluate_one(args.model, args.dataset, tm, rows)
     else:
-        evaluate_one(args.model, args.dataset, args.train_mode, args.pair_new, rows)
+        evaluate_one(args.model, args.dataset, args.train_mode, rows)
 
-    if args.output:
+    if args.output and rows:
         out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
         with open(out, "w", newline="") as f:

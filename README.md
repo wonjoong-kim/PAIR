@@ -14,12 +14,11 @@ official_github/
 │   ├── extract_features.py
 │   ├── extract_multi_layer_attn.py
 │   ├── train_pair.py
-│   ├── train_pair_new.py
 │   ├── eval_pair.py
 │   └── scripts/{extract_gta,extract_toolbench,train_all}.sh
 ├── grpo/            # Stage 2: GRPO fine-tuning with the PAIR reward
 │   ├── envs/{gta,toolbench}_env.py
-│   ├── rewards/{pair,pair_new,outcome}.py
+│   ├── rewards/{pair,outcome}.py
 │   ├── training/{policy,grpo_loop}.py
 │   └── scripts/{run_single,evaluate}.py, run_{gta,toolbench}_pair.sh
 ├── data/            # raw splits + extracted features + trained probes
@@ -31,7 +30,7 @@ official_github/
 
 ## 1. Method overview
 
-**PAIR (canonical)** — two-stage logistic regression:
+PAIR is a two-stage logistic regression probe over per-turn LM internals:
 
 | Stage | Input | Output |
 |-------|-------|--------|
@@ -39,18 +38,8 @@ official_github/
 | 2 | `[multi_layer_attn ; s_base]` | `s_final = σ(w₂ᵀ x + b₂)` |
 
 Both probes are trained offline with L2 regularization (`C = 0.01`).
-
-**PAIR-NEW** — logit-space residual variant of Stage 2:
-
-```
-z_base       = w₁ᵀ h + b₁
-delta_logit  = w₂ᵀ [a ; s_base] + b₂
-s_final      = σ(z_base + delta_logit)
-```
-
-This keeps the single sigmoid and guarantees `s_final = s_base` when the
-correction head produces zero delta — useful for clean-prefix turns
-where Stage 1 should already be confident.
+`s_final ∈ (0, 1)` is the per-turn reliability score, used both for
+offline contamination detection and as a dense GRPO reward.
 
 ---
 
@@ -140,9 +129,8 @@ API key**.
 python -m probing.extract_features        --model qwen7b --dataset gta
 python -m probing.extract_multi_layer_attn --model qwen7b --dataset gta
 
-# (b) train PAIR (Stage 1 + Stage 2 LR) and PAIR-NEW (logit residual)
-python -m probing.train_pair      --models qwen7b --datasets gta toolbench
-python -m probing.train_pair_new  --model  qwen7b --datasets gta toolbench
+# (b) train PAIR (Stage 1 + Stage 2 LR)
+python -m probing.train_pair --models qwen7b --datasets gta toolbench
 
 # (c) evaluate probes on matched_*_test splits
 python -m probing.eval_pair --model qwen7b --dataset gta --all
@@ -152,7 +140,6 @@ Probes are saved to:
 
 ```
 data/models/methods/PAIR/{model}/{dataset}/pair_{train_mode}.pkl
-data/models/methods/PAIR_NEW/{model}/{dataset}/pair_new_{train_mode}.pkl
 ```
 
 `train_mode ∈ {clean_only, mixed}` controls which `matched_*_train`
@@ -174,7 +161,7 @@ bash probing/scripts/train_all.sh
 ## 6. Stage 2 — GRPO fine-tuning with PAIR reward
 
 ```bash
-# Train (PAIR / PAIR-NEW / repair / momentum variants)
+# Train (PAIR, optionally with repair / momentum logit-space bonus)
 python -m grpo.scripts.run_single \
     --policy qwen7b --env gta --reward pair \
     --steps 500 --batch_size 8 --group_size 4 \
@@ -190,13 +177,12 @@ Reward options:
 | `--reward` | Description |
 |------------|-------------|
 | `pair`          | Canonical PAIR (`s_final` from Stage 2 LR). |
-| `pair_new`      | Logit-residual variant. |
 | `pair_repair`   | `pair` + logit-space repair bonus (`α · max(0, Δ_t)·(1−s_{t−1})`). |
 | `pair_momentum` | `pair` + logit-space cumulative momentum (`α · (s_t − mean(s_{<t}))`). |
 | `outcome`       | Sparse outcome reward at the final turn (baseline). |
 
 Probes are loaded from
-`data/models/methods/PAIR{,_NEW}/{model}/{env}/pair{,_new}_{train_mode}.pkl`,
+`data/models/methods/PAIR/{model}/{env}/pair_{train_mode}.pkl`,
 so Stage 1 must finish before Stage 2 starts.
 
 The trainer is a minimal custom GRPO loop (REINFORCE-style update with
