@@ -54,9 +54,9 @@ def load_episode_ids(model, dataset, split) -> np.ndarray:
 
 
 def score_pair(bundle, Xh, Xa) -> np.ndarray:
-    """Stage 1 → s_base, Stage 2 → s_final."""
-    s_base = bundle["probe_base"].predict_proba(Xh)[:, 1]
-    X_stage2 = np.column_stack([Xa, s_base])
+    """Stage 1 → s_bc, Stage 2 → s_final."""
+    s_bc = bundle["probe_base"].predict_proba(Xh)[:, 1]
+    X_stage2 = np.column_stack([Xa, s_bc])
     return bundle["probe_correction"].predict_proba(X_stage2)[:, 1]
 
 

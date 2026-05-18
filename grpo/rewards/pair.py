@@ -2,15 +2,15 @@
 
 Two-stage linear probe trained offline (see `probing/train_pair.py`):
 
-    Stage 1: last_token hidden state → LR → s_base
-    Stage 2: [multi_layer_attn ; s_base]   → LR → s_final
+    Stage 1: last_token hidden state → LR → s_bc
+    Stage 2: [multi_layer_attn ; s_bc]   → LR → s_final
 
 `s_final` is the per-turn reward signal. Both probes load from
 `<PAIR_ROOT>/data/models/methods/PAIR/{model}/{dataset}/pair_{train_mode}.pkl`.
 
-Two variants (`PAIRRepairReward`, `PAIRMomentumReward`) inject a bonus in
-LOGIT space so the final reward stays in (0, 1) and group-relative
-advantages don't collapse to zero from probe saturation.
+`PAIRMomentumReward` injects a momentum bonus in LOGIT space (paper
+Eq. 7) so the final reward stays in (0, 1) and group-relative advantages
+don't collapse from probe saturation.
 """
 
 from __future__ import annotations
@@ -118,31 +118,31 @@ class PAIRReward(RewardFunction):
         t0 = time.time()
         assistant_turns = [t for t in trajectory.turns if t.role == "assistant"]
         rewards: List[float] = []
-        s_base_values: List[float] = []
+        s_bc_values: List[float] = []
 
         for turn in assistant_turns:
             if turn.hidden_states is None or turn.attentions is None:
                 rewards.append(0.0)
-                s_base_values.append(0.0)
+                s_bc_values.append(0.0)
                 continue
-            s_base = 0.0
+            s_bc = 0.0
             s_final = 0.0
             try:
                 h_feat = F.feat_last_token(turn.hidden_states, turn.turn_start, turn.turn_end)
-                s_base = _temp_clip(
+                s_bc = _temp_clip(
                     float(self._probe_base.predict_proba(h_feat.reshape(1, -1))[0, 1])
                 )
 
                 a_feat = F.feat_multi_layer_attn(turn.attentions, turn.turn_start, turn.turn_end)
-                stage2_input = np.concatenate([a_feat, [s_base]]).reshape(1, -1)
+                stage2_input = np.concatenate([a_feat, [s_bc]]).reshape(1, -1)
                 s_final = _temp_clip(
                     float(self._probe_correction.predict_proba(stage2_input)[0, 1])
                 )
             except Exception as e:
                 logger.warning(f"PAIR failed on turn: {e}")
                 s_final = 0.0
-                s_base = 0.0
-            s_base_values.append(s_base)
+                s_bc = 0.0
+            s_bc_values.append(s_bc)
             rewards.append(s_final)
             # Free large activations once probe inference is done.
             turn.hidden_states = None
@@ -153,58 +153,26 @@ class PAIRReward(RewardFunction):
         return RewardOutput(
             turn_rewards=rewards,
             extras={
-                "mean_s_base": float(np.mean(s_base_values)) if s_base_values else 0.0,
+                "mean_s_bc": float(np.mean(s_bc_values)) if s_bc_values else 0.0,
                 "mean_s_final": float(np.mean(rewards)) if rewards else 0.0,
             },
         )
 
 
-class PAIRRepairReward(PAIRReward):
-    """PAIR + repair bonus, applied in logit space.
-
-        r_t = σ( logit(s_t) + α · max(0, Δ_t) · (1 − s_{t−1}) )
-
-    A logit-space bonus shifts the unbounded score while the final reward
-    stays in (0, 1), so the group never all-saturates and GRPO advantages
-    remain informative. α defaults to 2.0 (≈2-unit logit shift moves 0.5
-    → 0.88).
-    """
-
-    name = "pair_repair"
-
-    def __init__(self, *args, alpha: float = 2.0, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.alpha = alpha
-
-    def compute_rewards(self, trajectory: Trajectory) -> RewardOutput:
-        base_out = super().compute_rewards(trajectory)
-        s = base_out.turn_rewards
-        rewards = list(s)
-        for i in range(1, len(s)):
-            delta = s[i] - s[i - 1]
-            if delta > 0:
-                bonus_logit = self.alpha * delta * (1.0 - s[i - 1])
-                rewards[i] = _sigmoid(_logit(s[i]) + bonus_logit)
-        base_out.turn_rewards = rewards
-        base_out.extras["repair_alpha"] = self.alpha
-        base_out.extras["mean_repair_reward"] = (
-            float(np.mean(rewards)) if rewards else 0.0
-        )
-        return base_out
-
-
 class PAIRMomentumReward(PAIRReward):
-    """PAIR + cumulative-momentum bonus, applied in logit space.
+    """PAIR + cumulative-momentum bonus, applied in logit space (paper Eq. 7).
 
-        r_t = σ( logit(s_t) + α · (s_t − mean(s_{<t})) )
+        r_t = σ( logit(s̃_final,t) + α · (s̃_final,t − mean(s̃_<t)) )
 
-    Positive momentum boosts the reward but cannot saturate the whole group.
-    `clip_negative=True` ignores negative momentum (kept for ablations).
+    α defaults to 5 (paper Table 7). Positive momentum boosts the reward
+    relative to the trajectory's running mean, negative is symmetrically
+    penalized — restoring the within-group variance GRPO needs for credit
+    assignment without ever leaving the (0, 1) range.
     """
 
     name = "pair_momentum"
 
-    def __init__(self, *args, alpha: float = 2.0, clip_negative: bool = False, **kwargs):
+    def __init__(self, *args, alpha: float = 5.0, clip_negative: bool = False, **kwargs):
         super().__init__(*args, **kwargs)
         self.alpha = alpha
         self.clip_negative = clip_negative

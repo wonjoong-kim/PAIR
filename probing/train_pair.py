@@ -3,8 +3,8 @@
 PAIR (Probing AI for Reliability) classifies each assistant turn as
 clean/contaminated using a two-stage logistic-regression cascade:
 
-    Stage 1 (hidden):       w_1^T h_t + b_1                → s_base = σ(·)
-    Stage 2 (correction):   w_2^T [a_t ; s_base] + b_2     → s_final = σ(·)
+    Stage 1 (hidden):       w_1^T h_t + b_1                → s_bc = σ(·)
+    Stage 2 (correction):   w_2^T [a_t ; s_bc] + b_2     → s_final = σ(·)
 
 Canonical configuration (matches the paper):
 
@@ -105,12 +105,12 @@ def train_one(model: str, dataset: str, train_mode: str) -> Path:
         f"hidden_dim={Xh.shape[1]} attn_dim={Xa.shape[1]}"
     )
 
-    # Stage 1: hidden → s_base
+    # Stage 1: hidden → s_bc
     probe_base = make_lr().fit(Xh, y)
-    s_base = probe_base.predict_proba(Xh)[:, 1]
+    s_bc = probe_base.predict_proba(Xh)[:, 1]
 
-    # Stage 2: [attention, s_base] → s_final
-    X_stage2 = np.column_stack([Xa, s_base])
+    # Stage 2: [attention, s_bc] → s_final
+    X_stage2 = np.column_stack([Xa, s_bc])
     probe_correction = make_lr().fit(X_stage2, y)
 
     out_path = PAIR_DIR / model / dataset / f"pair_{train_mode}.pkl"

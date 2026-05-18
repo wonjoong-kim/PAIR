@@ -7,13 +7,15 @@ Loads:
 Runs deterministic (temperature = 0) rollouts, scores each episode, and
 writes a JSON report.
 
-Scoring:
+Scoring (paper Appendix H):
     - GTA: substring matching against the whitelist (mirrors the reference
       evaluator). Image-compare episodes are skipped from aggregates.
-    - ToolBench: LLM-as-judge (gpt-4o-mini) is recommended because the
-      ground truth is a long-form response and string matching scores ~0%.
-      Pass `--llm-judge` to enable; otherwise loose substring matching is
-      applied to the raw answer.
+    - ToolBench: LLM-as-judge with PARTIAL CREDIT — gpt-4o-mini returns
+      `yes` (1.0, most key facts captured), `partial` (0.5, some key facts,
+      minor errors), or `no` (0.0). Binary scoring loses signal on
+      ToolBench's long-form gold answers, so partial credit is the
+      protocol used in the paper. Pass `--llm-judge` to enable; otherwise
+      loose substring matching is applied to the raw answer.
 
 Usage:
     python -m grpo.scripts.evaluate --policy qwen7b --env gta \
@@ -115,35 +117,64 @@ def load_policy(policy_name: str, ckpt: Optional[str],
 # ──────────────────────────────────────────────
 
 def _llm_judge_tb(query: str, gt: Any, pred: str, model: str = "gpt-4o-mini") -> float:
-    """Binary yes/no judge: 1.0 if `pred` answers `query` consistently with
-    `gt`, otherwise 0.0. Falls back to 0.0 on API failure."""
+    """Partial-credit ToolBench judge (paper Appendix H).
+
+    Returns:
+        1.0  — `yes`     (most key facts captured; formatting differences allowed)
+        0.5  — `partial` (some key facts captured; minor omissions or local errors)
+        0.0  — `no`      (refusal, empty, off-topic, or majority-incorrect)
+
+    Falls back to 0.0 on API failure or when `OPENAI_API_KEY` is unset.
+    """
     if not pred or not str(gt).strip():
         return 0.0
     if not os.environ.get("OPENAI_API_KEY"):
         logger.warning("OPENAI_API_KEY not set; LLM judge returning 0.0")
         return 0.0
+
+    sys_prompt = (
+        "You are a strict JSON-only evaluator. Compare a model answer "
+        "against a reference answer for a multi-turn agent task. Focus on "
+        "the reference's key facts: named entities, numerical values, "
+        "dates, and stated relations. Formatting differences are OK.\n"
+        "Output ONLY a JSON object of the form {\"label\": \"yes\"|"
+        "\"partial\"|\"no\"}.\n"
+        "  - yes      : most key facts captured\n"
+        "  - partial  : some key facts captured, with minor omissions or "
+        "local errors\n"
+        "  - no       : refusal, empty, off-topic, or majority-incorrect"
+    )
+    user_prompt = (
+        f"Task:\n{query}\n\n"
+        f"Reference answer:\n{gt}\n\n"
+        f"Model answer:\n{pred}"
+    )
+
     try:
         import openai
         client = openai.OpenAI(api_key=os.environ["OPENAI_API_KEY"])
         resp = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content":
-                 "You are a strict grader. Given a user query, a reference answer, "
-                 "and a model answer, output ONLY 'yes' if the model answer is "
-                 "consistent with the reference and resolves the query, otherwise "
-                 "'no'. No other text."},
-                {"role": "user", "content":
-                 f"Query: {query}\nReference: {gt}\nModel answer: {pred}"},
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt},
             ],
             temperature=0.0,
-            max_tokens=4,
+            max_tokens=16,
+            response_format={"type": "json_object"},
         )
-        out = (resp.choices[0].message.content or "").strip().lower()
-        return 1.0 if out.startswith("y") else 0.0
+        out = (resp.choices[0].message.content or "").strip()
+        import json as _json
+        label = (_json.loads(out).get("label") or "").lower()
     except Exception as e:
         logger.warning(f"LLM judge failed: {e}")
         return 0.0
+
+    if label == "yes":
+        return 1.0
+    if label == "partial":
+        return 0.5
+    return 0.0
 
 
 # ──────────────────────────────────────────────
@@ -215,8 +246,8 @@ def main():
     parser.add_argument("--ckpt", default=None, help="LoRA adapter dir (omit → base model).")
     parser.add_argument("--split", default="clean_test")
     parser.add_argument("--n_episodes", type=int, default=None)
-    parser.add_argument("--max_steps", type=int, default=6)
-    parser.add_argument("--max_new_tokens", type=int, default=256)
+    parser.add_argument("--max_steps", type=int, default=10)
+    parser.add_argument("--max_new_tokens", type=int, default=1024)
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output", default=None)

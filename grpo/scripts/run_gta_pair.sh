@@ -6,12 +6,12 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 POLICY="${POLICY:-qwen7b}"
-REWARD="${REWARD:-pair}"           # pair | pair_repair | pair_momentum | outcome
+REWARD="${REWARD:-pair_momentum}"  # pair | pair_momentum | outcome   (paper headline uses pair_momentum)
 TRAIN_MODE="${TRAIN_MODE:-mixed}"
 STEPS="${STEPS:-500}"
-BATCH="${BATCH:-8}"
+BATCH="${BATCH:-1}"
 GROUP="${GROUP:-4}"
-LR="${LR:-1e-6}"
+LR="${LR:-3e-7}"
 
 python -m grpo.scripts.run_single \
     --policy "$POLICY" --env gta --reward "$REWARD" \

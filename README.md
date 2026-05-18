@@ -1,10 +1,19 @@
-# PAIR — Probing AI for Reliability
+# PAIR: Prefix-Aware Internal Reward Model for Multi-Turn Agent Optimization
 
-Official implementation of **PAIR**, a turn-level reliability signal for
-multi-turn agentic LLMs. PAIR couples (1) a frozen linear probe on
-hidden-state activations with (2) an attention-based correction probe to
-produce a per-turn `s_final ∈ (0, 1)` score, used both as an offline
-contamination detector and as a dense reward signal for GRPO fine-tuning.
+Official implementation of **PAIR** (Wonjoong Kim, Yeonjun In, Sangwu Park,
+Dongha Lee, Chanyoung Park), a turn-level reward for multi-turn agentic
+LLMs that is dense, runs at probe-level cost, and requires no external
+LLM judge, no ground-truth at inference, and no full-trajectory rollouts.
+
+PAIR is a two-stage probe over the agent's own internal states:
+
+1. a frozen logistic regression on hidden states produces a
+   belief-consistency score `s_bc`, and
+2. a logistic regression on multi-layer attention statistics + `s_bc`
+   corrects it toward grounded correctness, yielding `s_final`.
+
+`s_final ∈ (0, 1)` is used both as an offline contamination detector and
+as a dense step-level reward for GRPO fine-tuning of multi-turn agents.
 
 The repository is organised as two cleanly separable stages:
 
@@ -34,8 +43,8 @@ PAIR is a two-stage logistic regression probe over per-turn LM internals:
 
 | Stage | Input | Output |
 |-------|-------|--------|
-| 1 | `last_token` hidden state of the assistant turn | `s_base = σ(w₁ᵀ h + b₁)` |
-| 2 | `[multi_layer_attn ; s_base]` | `s_final = σ(w₂ᵀ x + b₂)` |
+| 1 | `last_token` hidden state of the assistant turn | `s_bc = σ(w₁ᵀ h + b₁)` |
+| 2 | `[multi_layer_attn ; s_bc]` | `s_final = σ(w₂ᵀ x + b₂)` |
 
 Both probes are trained offline with L2 regularization (`C = 0.01`).
 `s_final ∈ (0, 1)` is the per-turn reliability score, used both for
@@ -161,34 +170,34 @@ bash probing/scripts/train_all.sh
 ## 6. Stage 2 — GRPO fine-tuning with PAIR reward
 
 ```bash
-# Train (PAIR, optionally with repair / momentum logit-space bonus)
+# Train (paper's headline setting: PAIR + momentum, defaults match Table 7)
 python -m grpo.scripts.run_single \
-    --policy qwen7b --env gta --reward pair \
-    --steps 500 --batch_size 8 --group_size 4 \
-    --output_dir runs/qwen7b_gta_pair
+    --policy qwen7b --env gta --reward pair_momentum \
+    --output_dir runs/qwen7b_gta_pair_momentum
 
 # Or via the wrapper
-bash grpo/scripts/run_gta_pair.sh         # POLICY=qwen7b REWARD=pair (defaults)
-bash grpo/scripts/run_toolbench_pair.sh   # POLICY=qwen7b REWARD=pair (defaults)
+bash grpo/scripts/run_gta_pair.sh         # POLICY=qwen7b REWARD=pair_momentum (defaults)
+bash grpo/scripts/run_toolbench_pair.sh   # POLICY=qwen7b REWARD=pair_momentum (defaults)
 ```
 
 Reward options:
 
 | `--reward` | Description |
 |------------|-------------|
-| `pair`          | Canonical PAIR (`s_final` from Stage 2 LR). |
-| `pair_repair`   | `pair` + logit-space repair bonus (`α · max(0, Δ_t)·(1−s_{t−1})`). |
-| `pair_momentum` | `pair` + logit-space cumulative momentum (`α · (s_t − mean(s_{<t}))`). |
+| `pair`          | Vanilla PAIR — `s̃_final` from Stage 2 LR with temperature clip (paper §4.2 "PAIR w/o momentum"). |
+| `pair_momentum` | **Headline.** Adds a logit-space momentum bonus (`α · (s̃_final,t − mean(s̃_<t))`, α = 5; paper Eq. 7). |
 | `outcome`       | Sparse outcome reward at the final turn (baseline). |
 
 Probes are loaded from
 `data/models/methods/PAIR/{model}/{env}/pair_{train_mode}.pkl`,
 so Stage 1 must finish before Stage 2 starts.
 
-The trainer is a minimal custom GRPO loop (REINFORCE-style update with
-group-relative advantages, optional reference-KL penalty). Metrics are
-streamed to `runs/<name>/metrics.jsonl`; LoRA checkpoints are saved every
-`--save_every` steps.
+The trainer is a minimal in-process GRPO loop: per-prompt group-relative
+advantage normalization plus a REINFORCE-style LoRA update with a
+reference-KL anchor (`kl_beta = 0.01`). Metrics stream to
+`runs/<name>/metrics.jsonl`; LoRA checkpoints save every `--save_every`
+steps (default 50; the paper recommends selecting the best checkpoint
+across the 50-step grid rather than always using `ckpt_final`).
 
 ### Evaluation
 
@@ -202,10 +211,12 @@ python -m grpo.scripts.evaluate \
 # Sweep every run under runs/<policy>_<env>_*/
 python -m grpo.scripts.evaluate --policy qwen7b --env gta --eval_all
 
-# ToolBench: enable LLM-as-judge (string matching ≈ 0% on long-form answers)
+# ToolBench: use the partial-credit LLM judge (paper Appendix H).
+# Binary scoring is ~0% on long-form gold answers; partial credit
+# resolves the population into a usable 0.34–0.41 range.
 python -m grpo.scripts.evaluate --policy qwen7b --env toolbench \
-    --ckpt runs/qwen7b_toolbench_pair/ckpt_final --llm-judge \
-    --output runs/qwen7b_toolbench_pair/eval.json
+    --ckpt runs/qwen7b_toolbench_pair_momentum/ckpt_final --llm-judge \
+    --output runs/qwen7b_toolbench_pair_momentum/eval.json
 ```
 
 The report is a JSON dump containing per-episode scores plus
@@ -223,8 +234,15 @@ The report is a JSON dump containing per-episode scores plus
   match.
 * The PAIR probes' `_temp_clip` (T = 2, ε = 0.05) softens frozen-probe
   outputs to keep the GRPO group-relative advantage signal alive when
-  the policy starts saturating the probe — see comments in
+  the policy starts saturating the probe (paper Eq. 5) — see
   `grpo/rewards/pair.py`.
+* Paper Table 7 defaults are now wired into `run_single.py` and
+  `GRPOConfig` (α = 5, β = 0.01, lr = 3e-7, batch = 1, group = 4,
+  max_new_tokens = 1024, save_every = 50). Override at the CLI as
+  needed.
+* The paper trains on `train_mode = "mixed"` (matched_clean_train +
+  matched_contaminated_train). `clean_only` is included for
+  ablations.
 * `GPT_PARSE_PRIMARY=1` / `GPT_PARSE_FALLBACK=1` route raw model outputs
   through `gpt-4o-mini` for robust Thought/Action/Final Answer parsing
   (needs `OPENAI_API_KEY`).

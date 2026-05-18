@@ -40,22 +40,23 @@ logger = logging.getLogger("grpo_loop")
 
 @dataclass
 class GRPOConfig:
+    """Defaults follow paper Table 7 (Appendix G)."""
     policy_name: str
     env_name: str                  # "gta" or "toolbench"
     reward_name: str               # for logging
-    batch_size: int = 8
-    group_size: int = 4
+    batch_size: int = 1            # paper: 1 prompt / step
+    group_size: int = 4            # paper: G = 4 rollouts / prompt
     num_training_steps: int = 500
-    max_steps_per_rollout: int = 6
-    learning_rate: float = 1e-6
+    max_steps_per_rollout: int = 10
+    learning_rate: float = 3e-7    # paper: 3e-7 (larger lrs saturate the probe)
     clip_epsilon: float = 0.2
-    kl_beta: float = 0.0                # reference-KL penalty (0 = off)
-    lr_schedule: str = "constant"       # "constant" | "cosine"
+    kl_beta: float = 0.01          # paper: 0.01 (light reference-KL anchor)
+    lr_schedule: str = "constant"  # paper: constant + 5% warmup
     lr_warmup_frac: float = 0.05
     split: str = "clean_train"
     train_mode: str = "mixed"           # "clean_only" | "mixed"
     output_dir: str = "runs/default"
-    save_every: int = 100
+    save_every: int = 50           # paper recommends 50-step interval for best-ckpt selection
     log_every: int = 10
 
 
