@@ -1,9 +1,10 @@
 # PAIR: Prefix-Aware Internal Reward Model for Multi-Turn Agent Optimization
 
-Official implementation of **PAIR** (Wonjoong Kim, Yeonjun In, Sangwu Park,
-Dongha Lee, Chanyoung Park), a turn-level reward for multi-turn agentic
-LLMs that is dense, runs at probe-level cost, and requires no external
-LLM judge, no ground-truth at inference, and no full-trajectory rollouts.
+Code release for the paper *PAIR: Prefix-Aware Internal Reward Model
+for Multi-Turn Agent Optimization*. PAIR is a turn-level reward for
+multi-turn agentic LLMs that is dense, runs at probe-level cost, and
+requires no external LLM judge, no ground-truth at inference, and no
+full-trajectory rollouts.
 
 PAIR is a two-stage probe over the agent's own internal states:
 
@@ -254,5 +255,4 @@ The report is a JSON dump containing per-episode scores plus
 
 ## Citation
 
-If you use this code, please cite the PAIR paper (citation block to be
-added).
+Citation will be added after the review process.
