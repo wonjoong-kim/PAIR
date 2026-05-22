@@ -1,1 +1,1 @@
-"""PAIR — Probing AI for Reliability (offline probe training + evaluation)."""
+"""PAIR — offline probe training and evaluation."""

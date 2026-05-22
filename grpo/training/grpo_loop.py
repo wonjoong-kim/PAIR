@@ -1,18 +1,14 @@
-"""Minimal custom GRPO training loop for PAIR.
+"""Minimal in-process GRPO training loop for PAIR.
 
 Pipeline per step:
     1. Sample `batch_size` prompts from the env.
     2. For each prompt, roll out `group_size` trajectories with the policy,
-       capturing internal state (PAIR needs hidden states / attentions).
+       capturing hidden states / attentions (required by PAIR).
     3. Compute per-turn rewards with PAIR (`compute_rewards`).
     4. Assemble token-level reward vectors and compute group-relative
        advantages (mean = 0 within each group).
-    5. Run a REINFORCE-style update on LoRA parameters with optional
-       reference-KL penalty.
-
-We avoid VeRL because our rewards need hidden states / attentions from each
-rollout — integration with VeRL's worker/actor split is involved. With
-LoRA and small batch sizes, a simple in-process loop is sufficient.
+    5. REINFORCE-style update on LoRA parameters with optional
+       reference-KL anchor.
 """
 
 from __future__ import annotations

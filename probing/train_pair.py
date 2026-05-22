@@ -1,7 +1,7 @@
 """Train PAIR — two-stage linear probe.
 
-PAIR (Probing AI for Reliability) classifies each assistant turn as
-clean/contaminated using a two-stage logistic-regression cascade:
+PAIR classifies each assistant turn as clean/contaminated using a
+two-stage logistic-regression cascade:
 
     Stage 1 (hidden):       w_1^T h_t + b_1                → s_bc = σ(·)
     Stage 2 (correction):   w_2^T [a_t ; s_bc] + b_2     → s_final = σ(·)
